@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project C-WARN - Cloudburst Early Warning</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background-color: #f0f2f5; }
+        header { background-color: #1c2939; color: white; padding: 15px 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { margin: 0; }
+        main { display: flex; flex-wrap: wrap; padding: 20px; }
+        .card { background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin: 10px; padding: 20px; }
+        #map-container { flex: 1 1 60%; min-width: 400px; }
+        #map { height: 400px; border-radius: 8px; }
+        #status-container { flex: 1 1 30%; text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        #status-box { font-size: 2.5em; font-weight: bold; padding: 40px; border-radius: 8px; transition: all 0.3s ease; }
+        #charts-container { display: flex; flex: 1 1 100%; justify-content: space-around; flex-wrap: wrap; }
+        .chart-wrapper { width: 30%; min-width: 300px; }
+        /* Status Colors */
+        .status-initializing { background-color: #6c757d; color: white; }
+        .status-normal { background-color: #28a745; color: white; }
+        .status-warning { background-color: #ffc107; color: black; }
+        .status-alert { background-color: #dc3545; color: white; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Project C-WARN - Live Dashboard</h1>
+</header>
+
+<main>
+    <div class="card" id="map-container">
+        <h2>Sensor Network Status</h2>
+        <div id="map"></div>
+    </div>
+    <div class="card" id="status-container">
+        <h2>SYSTEM STATUS</h2>
+        <div id="status-box" class="status-initializing">INITIALIZING</div>
+        <p>Node ID: <span id="node-id">N/A</span></p>
+    </div>
+    <div class="card" id="charts-container">
+        <div class="chart-wrapper"><canvas id="pressureChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="tempChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="chargeChart"></canvas></div>
+    </div>
+</main>
+
+<audio id="alert-sound" src="https://www.soundjay.com/buttons/beep-01a.mp3" preload="auto"></audio>
+
+<script>
+    // --- Map Initialization ---
+    const map = L.map('map').setView([11.23, 77.16], 13); // Centered on Puliampatti, Tamil Nadu
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+    // --- Sensor Marker ---
+    const sensorIconNormal = L.icon({ iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', iconSize: [25, 41], iconAnchor: [12, 41] });
+    const sensorIconWarning = L.icon({ iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png', iconSize: [25, 41], iconAnchor: [12, 41] });
+    const sensorIconAlert = L.icon({ iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', iconSize: [25, 41], iconAnchor: [12, 41] });
+    const sensorMarker = L.marker([11.23, 77.16], { icon: sensorIconNormal }).addTo(map).bindPopup("<b>Sensor Node MD-01</b>");
+
+    // --- Chart Initialization ---
+    function createChart(canvasId, label, color) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        return new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: label, data: [], borderColor: color, tension: 0.1, fill: false }] },
+            options: { scales: { x: { ticks: { display: false } } } }
+        });
+    }
+    const pressureChart = createChart('pressureChart', 'Pressure (hPa)', 'rgb(54, 162, 235)');
+    const tempChart = createChart('tempChart', 'Sky Temp (°C)', 'rgb(255, 159, 64)');
+    const chargeChart = createChart('chargeChart', 'Atmospheric Charge (V)', 'rgb(255, 99, 132)');
+
+    // --- Data Fetching and UI Update ---
+    const statusBox = document.getElementById('status-box');
+    const nodeIdSpan = document.getElementById('node-id');
+    const alertSound = document.getElementById('alert-sound');
+    
+    function updateChart(chart, newData) {
+        if (chart.data.labels.length > 20) { // Keep only the last 20 data points
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+        }
+        chart.data.labels.push(new Date().toLocaleTimeString());
+        chart.data.datasets[0].data.push(newData);
+        chart.update('quiet'); // 'quiet' prevents animation jitter
+    }
+
+    async function fetchData() {
+        try {
+            const response = await fetch('http://127.0.0.1:5000/api/latest_data');
+            const data = await response.json();
+
+            // Update Status Box
+            statusBox.textContent = data.status;
+            nodeIdSpan.textContent = data.node_id;
+            // The class name must match the CSS classes we defined
+            statusBox.className = 'status-' + data.status.toLowerCase();
+
+            // Update Map Marker
+            if (data.status === 'ALERT') {
+                sensorMarker.setIcon(sensorIconAlert);
+                alertSound.play();
+            } else if (data.status === 'WARNING') {
+                sensorMarker.setIcon(sensorIconWarning);
+            } else {
+                sensorMarker.setIcon(sensorIconNormal);
+            }
+
+            // Update Charts
+            updateChart(pressureChart, data.pressure_hpa);
+            updateChart(tempChart, data.sky_temp_c);
+            updateChart(chargeChart, data.charge_v);
+
+        } catch (error) {
+            console.error("Failed to fetch data:", error);
+            statusBox.textContent = 'DISCONNECTED';
+            statusBox.className = 'status-alert';
+        }
+    }
+
+    // Fetch data every 3 seconds to match the sensor's speed
+    setInterval(fetchData, 3000);
+    fetchData(); // Fetch immediately on page load
+</script>
+
+</body>
+</html>
