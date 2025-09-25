@@ -8,4 +8,6 @@
 4. python sensor_simulator.py<br>
 5. run flask server<br>
    python app.py
+## SCREENSHOTS
+![c-WRAN](MEDIA/image.png)
    
