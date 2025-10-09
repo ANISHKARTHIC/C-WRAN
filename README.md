@@ -1,4 +1,4 @@
-# C-WARN: Collision Warning and Real-time Alert Network
+# C-WARN: Cloudbust Warning Alart Raising Network
 
 C-WARN is a real-time vehicle monitoring and collision alert system. It features a web-based dashboard that displays a vehicle's live location, speed, and operational status on an interactive map. The system uses an MQTT messaging protocol for efficient, low-latency communication between a simulated vehicle sensor and the web server.
 
